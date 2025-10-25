@@ -78,6 +78,7 @@ app.post('/api/create', async (req, res) => {
     });
 
     createTxRecord(build.txId, {
+      txHex: build.txHex,
       txBodyHex: build.txBodyHex,
       scriptHex: paymentScriptHex,
       m: mRequired,
@@ -111,7 +112,7 @@ app.get('/api/status/:txId', (req, res) => {
 app.get('/api/txbody/:txId', (req, res) => {
   const rec = getTxRecord(req.params.txId);
   if (!rec) return res.status(404).json({ error: 'not_found' });
-  return res.json({ txBodyHex: rec.txBodyHex });
+  return res.json({ txHex: rec.txHex, txBodyHex: rec.txBodyHex });
 });
 
 // Upload witness; do NOT auto-submit — submission happens via POST /api/submit

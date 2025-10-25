@@ -1,7 +1,7 @@
-const txs = new Map(); // txId -> { txBodyHex, scriptHex, m, signersKeyHashes, witnesses: Map<keyhash, hex> }
+const txs = new Map(); // txId -> { txHex, txBodyHex, scriptHex, m, signersKeyHashes, witnesses: Map<keyhash, hex>, preview }
 
-function createTxRecord(txId, { txBodyHex, scriptHex, m, signersKeyHashes, preview }) {
-  txs.set(txId, { txBodyHex, scriptHex, m, signersKeyHashes, witnesses: new Map(), preview });
+function createTxRecord(txId, { txHex, txBodyHex, scriptHex, m, signersKeyHashes, preview }) {
+  txs.set(txId, { txHex, txBodyHex, scriptHex, m, signersKeyHashes, witnesses: new Map(), preview });
 }
 function getTxRecord(txId) { return txs.get(txId); }
 function addWitness(txId, keyHashHex, witnessHex) {

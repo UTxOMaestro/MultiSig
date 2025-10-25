@@ -134,6 +134,9 @@ async function buildUnsignedTx({
   ns.add(CSL.NativeScript.from_bytes(Buffer.from(paymentScriptHex, 'hex')));
   ws.set_native_scripts(ns);
 
+  // Build the full unsigned Transaction for CIP-30 signTx
+  const unsignedTx = CSL.Transaction.new(body, ws);
+
   // Preview outputs + fee
   const outs = body.outputs();
   for (let i = 0; i < outs.len(); i++) {
@@ -161,6 +164,7 @@ async function buildUnsignedTx({
   return {
     txId: bytesToHex(hash.to_bytes()),
     txBodyHex: bytesToHex(body.to_bytes()),
+    txHex: bytesToHex(unsignedTx.to_bytes()),
     initialWitnessSetHex: bytesToHex(ws.to_bytes()),
     preview
   };

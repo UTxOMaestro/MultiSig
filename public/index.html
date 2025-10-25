@@ -92,8 +92,9 @@ async function buildTx(){
 async function signAndUpload(){
   if(!walletApi) return alert('Connect wallet first.');
   if(!currentTxId) return alert('Build a transaction first.');
-  const tb=await fetch(`/api/txbody/${currentTxId}`).then(r=>r.json()); if(!tb.txBodyHex){ log(tb); return; }
-  const witHex = await walletApi.signTx(tb.txBodyHex, true); // partial
+  const tb=await fetch(`/api/txbody/${currentTxId}`).then(r=>r.json()); if(!(tb.txHex||tb.txBodyHex)){ log(tb); return; }
+  const toSign = tb.txHex || tb.txBodyHex; // CIP-30 prefers full Transaction (txHex)
+  const witHex = await walletApi.signTx(toSign, true); // partial
   const r=await fetch(`/api/witness`,{
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({ txId: currentTxId, signerKeyHashHex:null, witnessHex: witHex })

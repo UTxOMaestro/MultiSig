@@ -27,7 +27,7 @@ const DEF_PAY_SCRIPT = process.env.PAYMENT_SCRIPT_CBOR || '';
 const DEF_M = parseInt(process.env.M_REQUIRED || '3', 10);
 const DEF_DEST = process.env.DEST_ADDRESS || '';
 const ENV_KEYHASHES = (process.env.REQUIRED_KEY_HASHES || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 // Simple in-memory event stream for broadcasting tx lifecycle
 const sseClients = new Set();
@@ -70,10 +70,13 @@ app.post('/api/create', async (req, res) => {
     if (!multisigAddress || !paymentScriptHex || !mRequired || !requiredKeyHashes?.length)
       return res.status(400).json({ error: 'missing_params' });
 
+    const normalizedRequired = (requiredKeyHashes || []).map(h => String(h).trim().toLowerCase());
+    const mReq = parseInt(mRequired, 10) || DEF_M;
+
     const build = await buildUnsignedTx({
       bf, network: NETWORK,
       multisigAddress, paymentScriptHex,
-      requiredKeyHashes, mRequired,
+      requiredKeyHashes: normalizedRequired, mRequired: mReq,
       mode, destAddress, outputs
     });
 
@@ -81,8 +84,8 @@ app.post('/api/create', async (req, res) => {
       txHex: build.txHex,
       txBodyHex: build.txBodyHex,
       scriptHex: paymentScriptHex,
-      m: mRequired,
-      signersKeyHashes: requiredKeyHashes,
+      m: mReq,
+      signersKeyHashes: normalizedRequired,
       preview: build.preview
     });
 
@@ -92,8 +95,8 @@ app.post('/api/create', async (req, res) => {
     return res.json({
       txId: build.txId,
       preview: build.preview,
-      mRequired,
-      requiredKeyHashes
+      mRequired: mReq,
+      requiredKeyHashes: normalizedRequired
     });
   } catch (e) {
     console.error(e);
@@ -106,6 +109,14 @@ app.get('/api/status/:txId', (req, res) => {
   const s = status(req.params.txId);
   if (!s) return res.status(404).json({ error: 'not_found' });
   return res.json(s);
+});
+
+// List collected witnesses (includes raw witness CBOR hex per signer)
+app.get('/api/witnesses/:txId', (req, res) => {
+  const rec = getTxRecord(req.params.txId);
+  if (!rec) return res.status(404).json({ error: 'not_found' });
+  const items = Array.from(rec.witnesses.entries()).map(([signer, witnessHex]) => ({ signer, witnessHex }));
+  return res.json({ witnesses: items, m: rec.m, required: rec.signersKeyHashes });
 });
 
 // Tx body for signing
@@ -124,21 +135,34 @@ app.post('/api/witness', async (req, res) => {
     const rec = getTxRecord(txId);
     if (!rec) return res.status(404).json({ error: 'not_found' });
 
-    // If signer hash not provided, derive from witness
+    // If signer hash not provided, derive from witness.
+    // Accept either a TransactionWitnessSet CBOR or a full signed Transaction CBOR.
     let signer = signerKeyHashHex;
-    if (!signer) {
-      const ws = CSL.TransactionWitnessSet.from_bytes(Buffer.from(witnessHex, 'hex'));
-      const vkeys = ws.vkeys();
-      if (!vkeys || vkeys.len() === 0) return res.status(400).json({ error: 'empty_vkeys' });
-      const vk = vkeys.get(0).vkey().public_key();
-      signer = Buffer.from(vk.hash().to_bytes()).toString('hex');
+    try {
+      let vkeys = null;
+      try {
+        const ws = CSL.TransactionWitnessSet.from_bytes(Buffer.from(witnessHex, 'hex'));
+        vkeys = ws.vkeys();
+      } catch (_) {
+        const tx = CSL.Transaction.from_bytes(Buffer.from(witnessHex, 'hex'));
+        const ws2 = tx.witness_set();
+        vkeys = ws2?.vkeys();
+      }
+      if (!signer) {
+        if (!vkeys || vkeys.len() === 0) return res.status(400).json({ error: 'empty_vkeys' });
+        const vk = vkeys.get(0).vkey().public_key();
+        signer = Buffer.from(vk.hash().to_bytes()).toString('hex');
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'invalid_witness_cbor' });
     }
 
     // Allowlist
-    if (!rec.signersKeyHashes.includes(signer))
+    const normalizedSigner = String(signer).toLowerCase();
+    if (!rec.signersKeyHashes.includes(normalizedSigner))
       return res.status(400).json({ error: 'signer_not_in_required_set' });
 
-    const r = addWitness(txId, signer, witnessHex);
+    const r = addWitness(txId, normalizedSigner, witnessHex);
     if (!r.ok) return res.status(500).json({ error: r.error });
     try { sseBroadcast('witness', { txId, collected: r.count, required: r.m }); } catch {}
     return res.json({ ok: true, submitted: false, collected: r.count, required: r.m });

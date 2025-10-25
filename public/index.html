@@ -47,6 +47,8 @@
   <button id="statusBtn">Refresh Status</button>
   <button id="submitBtn">Submit Tx</button>
   <pre id="status"></pre>
+  <h4>Collected Witnesses</h4>
+  <pre id="wlist"></pre>
   <hr/>
 </section>
 
@@ -64,6 +66,7 @@ async function connectWallet(){
 function setTxId(txId){
   currentTxId=txId; const el=document.getElementById('txIdView');
   el.textContent = txId ? `Tx ID: ${txId}` : '';
+  try{ if(txId){ localStorage.setItem('currentTxId', txId); } else { localStorage.removeItem('currentTxId'); } }catch(_){}
 }
 
 async function buildTx(){
@@ -108,6 +111,13 @@ async function refreshStatus(){
   document.getElementById('status').textContent=JSON.stringify(s,null,2);
   const canSubmit = s && s.collected && s.m && s.collected.length >= s.m;
   document.getElementById('submitBtn').disabled = !canSubmit;
+  try{
+    const ws=await fetch(`/api/witnesses/${currentTxId}`).then(r=>r.json());
+    if(ws && ws.witnesses){
+      const lines = ws.witnesses.map(w=>`${w.signer}: ${w.witnessHex}`);
+      document.getElementById('wlist').textContent = lines.join('\n');
+    }
+  }catch(_){ document.getElementById('wlist').textContent=''; }
 }
 
 async function submitTx(){
@@ -135,6 +145,16 @@ evt.addEventListener('tx_created', (ev)=>{
 });
 evt.addEventListener('witness', ()=>{ refreshStatus(); });
 evt.addEventListener('submitted', (ev)=>{ try{ log(JSON.parse(ev.data)); }catch{} });
+
+// Restore last txId on load and refresh status
+try{
+  const last = localStorage.getItem('currentTxId');
+  if(last){ setTxId(last); refreshStatus(); }
+  // Support deep link ?txId=...
+  const u=new URL(window.location.href);
+  const q=u.searchParams.get('txId');
+  if(q){ setTxId(q); refreshStatus(); }
+}catch(_){}
 </script>
 </body>
 </html>

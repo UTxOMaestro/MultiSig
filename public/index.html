@@ -31,9 +31,16 @@
 <section>
   <h3>Build Transaction</h3>
   <div class="row"><input id="dest" class="mono" placeholder="destination address (bech32)" value="addr1q84kuy4fm5pevp9mflwg924xxzw0evs4jlmevcarxzm49hletjemey8rlkeakj5ca4j2wamzm25fr3a0wyudgh3c4kmsprglkh"/></div>
-  <div class="row"><input id="unit" class="mono" placeholder="unit (policy_id + asset_name_hex)" value="766fce8055f39d40fcfc19721677b3deb2e7846950ae08dce757f1e753554741522042555348"/></div>
+  <div class="row">
+    <input id="unit" class="mono" placeholder="asset unit (policy_id + asset_name_hex)" value="766fce8055f39d40fcfc19721677b3deb2e7846950ae08dce757f1e753554741522042555348"/>
+    <button id="balBtn">Check Balance</button>
+  </div>
+  <div id="balanceInfo" class="small mono muted"></div>
   <div class="row"><input id="qty" class="mono" placeholder="quantity" value="1"/></div>
-  <button id="buildBtn">Build</button>
+  <div class="row" style="gap:12px">
+    <button id="buildBtn">Build</button>
+    <button id="resetBtn">Reset Transaction</button>
+  </div>
   <div id="txIdView" class="small mono muted"></div>
   <div id="preview" class="small mono muted" style="margin-top:6px"></div>
   <h3>Sign Transaction</h3>
@@ -73,8 +80,9 @@ async function buildTx(){
   try{
     const address=document.getElementById('dest').value.trim();
     const unit=document.getElementById('unit').value.trim();
-    const qty='1';
+    const qty=document.getElementById('qty').value.trim();
     if(!address||!unit) return alert('Enter destination and unit');
+    if(!qty||!(/^[0-9]+$/.test(qty))) return alert('Enter a valid quantity');
 
     const r=await fetch('/api/create',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -132,6 +140,38 @@ document.getElementById('signBtn').onclick=signAndUpload;
 document.getElementById('statusBtn').onclick=refreshStatus;
 document.getElementById('submitBtn').onclick=submitTx;
 
+// Check balance and autofill qty
+document.getElementById('balBtn').onclick=async()=>{
+  try{
+    const unit=document.getElementById('unit').value.trim().toLowerCase();
+    const info=document.getElementById('balanceInfo');
+    info.textContent='';
+    if(!unit) return alert('Paste an asset unit first');
+    const r=await fetch(`/api/balance/${unit}`).then(r=>r.json());
+    if(r?.quantity!==undefined){
+      info.textContent=`Balance: ${r.quantity}`;
+      const qtyEl=document.getElementById('qty');
+      qtyEl.value=r.quantity;
+    }else{
+      info.textContent='Balance not available';
+    }
+  }catch(e){ log(e?.message||e); alert('Balance fetch failed'); }
+};
+
+// Reset transaction (client + server)
+document.getElementById('resetBtn').onclick=async()=>{
+  try{
+    const txId=currentTxId;
+    await fetch('/api/reset',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ txId }) });
+  }catch(_){ }
+  setTxId(null);
+  document.getElementById('preview').textContent='';
+  document.getElementById('status').textContent='';
+  document.getElementById('wlist').textContent='';
+  document.getElementById('balanceInfo').textContent='';
+  log('Transaction reset');
+};
+
 // Auto-connect to SSE so first builder notifies everyone
 const evt = new EventSource('/api/events');
 evt.addEventListener('tx_created', (ev)=>{
@@ -145,6 +185,7 @@ evt.addEventListener('tx_created', (ev)=>{
 });
 evt.addEventListener('witness', ()=>{ refreshStatus(); });
 evt.addEventListener('submitted', (ev)=>{ try{ log(JSON.parse(ev.data)); }catch{} });
+evt.addEventListener('reset', ()=>{ /* noop: client handles own UI reset via button */ });
 
 // Restore last txId on load and refresh status
 try{

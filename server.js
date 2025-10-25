@@ -85,6 +85,27 @@ app.get('/api/events', (req, res) => {
   req.on('close', () => { sseClients.delete(res); });
 });
 
+// Balance for a specific asset unit at the configured multisig address
+app.get('/api/balance/:unit', async (req, res) => {
+  try {
+    const unit = String(req.params.unit || '').toLowerCase();
+    if (!unit || unit.length < 56) return res.status(400).json({ error: 'invalid_unit' });
+    if (!DEF_MSIG_ADDR) return res.status(400).json({ error: 'multisig_not_configured' });
+
+    const utxos = await bf.utxosByAddress(DEF_MSIG_ADDR);
+    let sum = 0n;
+    for (const u of utxos) {
+      for (const a of u.amount) {
+        if (a.unit === unit) sum += BigInt(a.quantity);
+      }
+    }
+    return res.json({ address: DEF_MSIG_ADDR, unit, quantity: sum.toString() });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
 // Create session + unsigned tx
 app.post('/api/create', async (req, res) => {
   try {
@@ -196,6 +217,22 @@ app.post('/api/witness', async (req, res) => {
     if (!r.ok) return res.status(500).json({ error: r.error });
     try { sseBroadcast('witness', { txId, collected: r.count, required: r.m }); } catch {}
     return res.json({ ok: true, submitted: false, collected: r.count, required: r.m });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
+// Reset current session and optionally clear a transaction record
+app.post('/api/reset', (req, res) => {
+  try {
+    const { txId } = req.body || {};
+    if (txId) {
+      try { clearTx(txId); } catch (_) {}
+    }
+    latestSession = null;
+    try { sseBroadcast('reset', { txId: txId || null }); } catch {}
+    return res.json({ ok: true });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });

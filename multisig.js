@@ -107,7 +107,7 @@ async function buildUnsignedTx({
     const totalMA = totalValue.multiasset();
     if (totalMA) outVal.set_multiasset(totalMA);
     tb.add_output(CSL.TransactionOutput.new(dest, outVal));
-    // Defer change calculation until after we set a buffered fee
+    tb.add_change_if_needed(dest);
   } else if (mode === 'explicit') {
     for (const o of outputs || []) {
       const v = CSL.Value.new(CSL.BigNum.from_str(o.lovelace || '0'));
@@ -115,29 +115,15 @@ async function buildUnsignedTx({
       bumpAdaIfTokens(v);
       tb.add_output(CSL.TransactionOutput.new(CSL.Address.from_bech32(o.address), v));
     }
-    // Defer change calculation until after we set a buffered fee
+    tb.add_change_if_needed(msAddr);
   } else {
     throw new Error('invalid mode');
   }
 
-  // Fee buffer to account for m vkey witnesses being added later
-  // Without this, final tx size grows and the node rejects with FeeTooSmall
-  const feeCoefA = Number(protocol.min_fee_a || 44);
-  const estVkeyWitnessBytes = 300; // conservative per-witness byte estimate for multi-sig
-  const witnessCount = Math.max(Number(mRequired || 1), 1);
-  const feeBuffer = String(feeCoefA * estVkeyWitnessBytes * witnessCount);
-
-  const changeAddr = (mode === 'sendAll') ? CSL.Address.from_bech32(destAddress) : msAddr;
-  // First pass: base min fee + buffer
-  const baseMinFee = tb.min_fee();
-  const feeWithBuffer = baseMinFee.checked_add(CSL.BigNum.from_str(feeBuffer));
-  tb.set_fee(feeWithBuffer);
-  tb.add_change_if_needed(changeAddr);
-  // Second pass: change output increases size slightly; recompute
-  const minFeeAfterChange = tb.min_fee();
-  const finalFee = minFeeAfterChange.checked_add(CSL.BigNum.from_str(feeBuffer));
-  tb.set_fee(finalFee);
-  tb.add_change_if_needed(changeAddr);
+  // Required signers (native-script multisig)
+  for (const kh of requiredKeyHashes) {
+    tb.add_required_signer(CSL.Ed25519KeyHash.from_bytes(Buffer.from(kh, 'hex')));
+  }
 
   const body = tb.build();
   const hash = CSL.hash_transaction(body);

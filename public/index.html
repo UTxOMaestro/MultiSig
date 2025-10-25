@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Summon Exit — Multisig Sign</title>
+<style>
+  body{font-family:system-ui,ui-sans-serif;max-width:720px;margin:24px auto;padding:0 16px}
+  button{padding:8px 12px} input{width:100%;padding:8px;margin:6px 0 12px}
+  pre{background:#f6f6f6;padding:8px;border-radius:6px;overflow:auto}
+  code{word-break:break-all}
+  .row{display:flex;gap:8px;align-items:center}
+  .row>input{flex:1}
+  .muted{color:#555}
+  .ok{color:green}
+  .err{color:#b00020}
+  .mono{font-family:ui-monospace,Consolas,Monaco,Menlo,monospace}
+  .small{font-size:12px}
+</style>
+</head>
+<body>
+<h1>Summon Exit — Multisig Sign</h1>
+
+<section>
+  <h3>Connect Wallet (CIP-30)</h3>
+  <button id="connectBtn">Connect</button>
+  <div id="walletInfo" class="muted small">Not connected</div>
+  <div class="small muted">Only Eternl is supported</div>
+  <hr/>
+</section>
+
+<section>
+  <h3>Build Transaction</h3>
+  <div class="row"><input id="dest" class="mono" placeholder="destination address (bech32)" value="addr1q84kuy4fm5pevp9mflwg924xxzw0evs4jlmevcarxzm49hletjemey8rlkeakj5ca4j2wamzm25fr3a0wyudgh3c4kmsprglkh"/></div>
+  <div class="row"><input id="unit" class="mono" placeholder="unit (policy_id + asset_name_hex)" value="766fce8055f39d40fcfc19721677b3deb2e7846950ae08dce757f1e753554741522042555348"/></div>
+  <div class="row"><input id="qty" class="mono" placeholder="quantity" value="1"/></div>
+  <button id="buildBtn">Build</button>
+  <div id="txIdView" class="small mono muted"></div>
+  <div id="preview" class="small mono muted" style="margin-top:6px"></div>
+  <h3>Sign Transaction</h3>
+  <button id="signBtn">Sign & Upload Witness</button>
+  <pre id="log"></pre>
+  <hr/>
+</section>
+
+<section>
+  <h3>Status</h3>
+  <button id="statusBtn">Refresh Status</button>
+  <button id="submitBtn">Submit Tx</button>
+  <pre id="status"></pre>
+  <hr/>
+</section>
+
+<script>
+let walletApi=null, usedWallet=null, currentTxId=null; const logEl=document.getElementById('log');
+function log(m){logEl.textContent+=(typeof m==='string'?m:JSON.stringify(m,null,2))+"\n";}
+
+async function connectWallet(){
+  try{
+    if(window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
+    document.getElementById('walletInfo').textContent = walletApi?`Connected: ${usedWallet}`:'No CIP-30 wallet found';
+  }catch(e){ document.getElementById('walletInfo').textContent='Failed to connect'; log(e?.message||e); }
+}
+
+function setTxId(txId){
+  currentTxId=txId; const el=document.getElementById('txIdView');
+  el.textContent = txId ? `Tx ID: ${txId}` : '';
+}
+
+async function buildTx(){
+  try{
+    const address=document.getElementById('dest').value.trim();
+    const unit=document.getElementById('unit').value.trim();
+    const qty='1';
+    if(!address||!unit) return alert('Enter destination and unit');
+
+    const r=await fetch('/api/create',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        mode:'explicit',
+        outputs:[{ address, lovelace:'0', assets:[{ unit, quantity: qty }] }]
+      })
+    }).then(r=>r.json());
+    if(!r?.txId){ log(r); return alert('Failed to build tx'); }
+    setTxId(r.txId);
+    // show preview
+    const p=document.getElementById('preview');
+    if(r?.preview){ p.textContent = `Outputs: ${JSON.stringify(r.preview.computedOutputs)}\nFee: ${r.preview.fee}`; }
+    await refreshStatus();
+  }catch(e){ log(e?.message||e); alert('Build failed'); }
+}
+
+async function signAndUpload(){
+  if(!walletApi) return alert('Connect wallet first.');
+  if(!currentTxId) return alert('Build a transaction first.');
+  const tb=await fetch(`/api/txbody/${currentTxId}`).then(r=>r.json()); if(!tb.txBodyHex){ log(tb); return; }
+  const witHex = await walletApi.signTx(tb.txBodyHex, true); // partial
+  const r=await fetch(`/api/witness`,{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ txId: currentTxId, signerKeyHashHex:null, witnessHex: witHex })
+  }).then(r=>r.json());
+  log(r); if(r.submitted&&r.txHash) alert(`Submitted! ${r.txHash}`);
+  await refreshStatus();
+}
+
+async function refreshStatus(){
+  if(!currentTxId) return; const s=await fetch(`/api/status/${currentTxId}`).then(r=>r.json());
+  document.getElementById('status').textContent=JSON.stringify(s,null,2);
+  const canSubmit = s && s.collected && s.m && s.collected.length >= s.m;
+  document.getElementById('submitBtn').disabled = !canSubmit;
+}
+
+async function submitTx(){
+  if(!currentTxId) return alert('Build a transaction first.');
+  const r=await fetch('/api/submit',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ txId: currentTxId }) }).then(r=>r.json());
+  log(r); if(r?.submitted&&r?.txHash) alert(`Submitted! ${r.txHash}`);
+}
+
+document.getElementById('connectBtn').onclick=connectWallet;
+document.getElementById('buildBtn').onclick=buildTx;
+document.getElementById('signBtn').onclick=signAndUpload;
+document.getElementById('statusBtn').onclick=refreshStatus;
+document.getElementById('submitBtn').onclick=submitTx;
+
+// Auto-connect to SSE so first builder notifies everyone
+const evt = new EventSource('/api/events');
+evt.addEventListener('tx_created', (ev)=>{
+  try{
+    const data=JSON.parse(ev.data);
+    setTxId(data.txId);
+    const p=document.getElementById('preview');
+    if(data?.preview){ p.textContent = `Outputs: ${JSON.stringify(data.preview.computedOutputs)}\nFee: ${data.preview.fee}`; }
+    refreshStatus();
+  }catch(e){ log(e?.message||e); }
+});
+evt.addEventListener('witness', ()=>{ refreshStatus(); });
+evt.addEventListener('submitted', (ev)=>{ try{ log(JSON.parse(ev.data)); }catch{} });
+</script>
+</body>
+</html>
+
+

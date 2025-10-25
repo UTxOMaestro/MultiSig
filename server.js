@@ -21,6 +21,37 @@ const PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 if (!PROJECT_ID) { console.error('Missing BLOCKFROST_PROJECT_ID'); process.exit(1); }
 const bf = bfClient(PROJECT_ID, NETWORK);
 
+// Hardcoded allowed signers (DO NOT RELY ON env)
+const HARDCODED_SIGNER_ADDRS = [
+  'addr1qxjm794jsle2u5su9gll0q42kaf9tjcnlut3m50yy4zcp8cd9l99p0tnukemrdh5rm0r8slxlafnnq7zg7cyyhfnt8zsnxapj9',
+  'addr1q9tkavplzau59l2rftr8njgfq7f0gqcnuxw4m2um4w7jaejs3r3w8ty82wrkle7asxnryw2p5cfvn655azp5qr4076js6uph22',
+  'addr1q8m58vwtzqc2skyrtgf5f223unxl95r3m2kca7lp2hl69nesjpt9dvsxta2ud5a55luyryjwn9nuw560jnlmfhs7vgysvcpzkg'
+];
+
+function derivePaymentKeyHashHexFromAddr(addrBech32) {
+  try {
+    const addr = CSL.Address.from_bech32(addrBech32);
+    const base = CSL.BaseAddress.from_address(addr);
+    if (base) {
+      const kh = base.payment_cred().to_keyhash();
+      if (kh) return Buffer.from(kh.to_bytes()).toString('hex');
+    }
+    const ent = CSL.EnterpriseAddress.from_address(addr);
+    if (ent) {
+      const kh = ent.payment_cred().to_keyhash();
+      if (kh) return Buffer.from(kh.to_bytes()).toString('hex');
+    }
+  } catch (_) {}
+  return null;
+}
+
+const ALLOWED_PAYMENT_KEY_HASHES = HARDCODED_SIGNER_ADDRS
+  .map(derivePaymentKeyHashHexFromAddr)
+  .filter(Boolean)
+  .map(h => h.toLowerCase());
+
+const FORCED_M_REQUIRED = 3;
+
 // Defaults from env (override per request if needed)
 const DEF_MSIG_ADDR = process.env.MULTISIG_ADDRESS || '';
 const DEF_PAY_SCRIPT = process.env.PAYMENT_SCRIPT_CBOR || '';
@@ -60,18 +91,17 @@ app.post('/api/create', async (req, res) => {
     const {
       multisigAddress = DEF_MSIG_ADDR,
       paymentScriptHex = DEF_PAY_SCRIPT,
-      mRequired = DEF_M,
-      requiredKeyHashes = ENV_KEYHASHES,
       mode = 'sendAll',       // default sweep
       destAddress = DEF_DEST, // from ENV
       outputs                 // for explicit mode
     } = req.body || {};
 
-    if (!multisigAddress || !paymentScriptHex || !mRequired || !requiredKeyHashes?.length)
+    if (!multisigAddress || !paymentScriptHex)
       return res.status(400).json({ error: 'missing_params' });
 
-    const normalizedRequired = (requiredKeyHashes || []).map(h => String(h).trim().toLowerCase());
-    const mReq = parseInt(mRequired, 10) || DEF_M;
+    // Force 3-of-3 from the hardcoded allowlist
+    const normalizedRequired = ALLOWED_PAYMENT_KEY_HASHES;
+    const mReq = FORCED_M_REQUIRED;
 
     const build = await buildUnsignedTx({
       bf, network: NETWORK,

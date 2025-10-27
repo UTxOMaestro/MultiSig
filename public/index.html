@@ -45,7 +45,10 @@
   <div id="preview" class="small mono muted" style="margin-top:6px"></div>
   <h3>Sign Transaction</h3>
   <button id="signBtn">Sign & Upload Witness</button>
+  <div id="signedCounter" class="small mono muted"></div>
   <pre id="log"></pre>
+  <h4>Collected Witnesses</h4>
+  <pre id="wlist"></pre>
   <hr/>
 </section>
 
@@ -54,8 +57,6 @@
   <button id="statusBtn">Refresh Status</button>
   <button id="submitBtn">Submit Tx</button>
   <pre id="status"></pre>
-  <h4>Collected Witnesses</h4>
-  <pre id="wlist"></pre>
   <hr/>
 </section>
 
@@ -119,6 +120,11 @@ async function refreshStatus(){
   document.getElementById('status').textContent=JSON.stringify(s,null,2);
   const canSubmit = s && s.collected && s.m && s.collected.length >= s.m;
   document.getElementById('submitBtn').disabled = !canSubmit;
+  // update signed counter (x/y)
+  try{
+    const sc=document.getElementById('signedCounter');
+    if(sc){ const x=(s?.collected?.length)||0; const y=(s?.m)||0; sc.textContent = y?`${x}/${y} signed`:''; }
+  }catch(_){ }
   try{
     const ws=await fetch(`/api/witnesses/${currentTxId}`).then(r=>r.json());
     if(ws && ws.witnesses){
@@ -168,6 +174,7 @@ document.getElementById('resetBtn').onclick=async()=>{
   document.getElementById('preview').textContent='';
   document.getElementById('status').textContent='';
   document.getElementById('wlist').textContent='';
+  const sc=document.getElementById('signedCounter'); if(sc) sc.textContent='';
   document.getElementById('balanceInfo').textContent='';
   log('Transaction reset');
 };

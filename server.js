@@ -205,10 +205,8 @@ app.post('/api/witness', async (req, res) => {
       return res.status(400).json({ error: 'invalid_witness_cbor' });
     }
 
-    // Allowlist
+    // Allowlist check removed - accept any signer
     const normalizedSigner = String(signer).toLowerCase();
-    if (!rec.signersKeyHashes.includes(normalizedSigner))
-      return res.status(400).json({ error: 'signer_not_in_required_set' });
 
     const r = addWitness(txId, normalizedSigner, witnessHex);
     if (!r.ok) return res.status(500).json({ error: r.error });

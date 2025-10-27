@@ -21,12 +21,12 @@ const PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 if (!PROJECT_ID) { console.error('Missing BLOCKFROST_PROJECT_ID'); process.exit(1); }
 const bf = bfClient(PROJECT_ID, NETWORK);
 
-// Hardcoded allowed signers (DO NOT RELY ON env)
-const HARDCODED_SIGNER_ADDRS = [
-  'addr1qxjm794jsle2u5su9gll0q42kaf9tjcnlut3m50yy4zcp8cd9l99p0tnukemrdh5rm0r8slxlafnnq7zg7cyyhfnt8zsnxapj9',
-  'addr1q9tkavplzau59l2rftr8njgfq7f0gqcnuxw4m2um4w7jaejs3r3w8ty82wrkle7asxnryw2p5cfvn655azp5qr4076js6uph22',
-  'addr1q8m58vwtzqc2skyrtgf5f223unxl95r3m2kca7lp2hl69nesjpt9dvsxta2ud5a55luyryjwn9nuw560jnlmfhs7vgysvcpzkg'
-];
+// Hardcoded allowed signer key hashes (lowercase hex; DO NOT RELY ON env)
+const ALLOWED_PAYMENT_KEY_HASHES = [
+  'f95cb3bc90e3fdb3db4a98ed64a77762daa891c7af7138d45e38adb7',
+  '22c601535ab5159654c1d0d56fae298e56b84af96325a4b2772ab014',
+  '20ce5b4341421c7c3f9aa03ea0413c10d2b975a8bd4fde6b43a0444a'
+].map(h => h.toLowerCase());
 
 function derivePaymentKeyHashHexFromAddr(addrBech32) {
   try {
@@ -45,10 +45,7 @@ function derivePaymentKeyHashHexFromAddr(addrBech32) {
   return null;
 }
 
-const ALLOWED_PAYMENT_KEY_HASHES = HARDCODED_SIGNER_ADDRS
-  .map(derivePaymentKeyHashHexFromAddr)
-  .filter(Boolean)
-  .map(h => h.toLowerCase());
+// Note: signer key hashes are specified directly above
 
 const FORCED_M_REQUIRED = 3;
 

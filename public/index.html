@@ -46,6 +46,10 @@
   .collapsible.collapsed::before{transform:rotate(-90deg)}
   .collapse-content{max-height:400px;overflow:auto;transition:max-height 0.3s ease}
   .collapse-content.collapsed{max-height:0;overflow:hidden}
+  .tx-preview{background:var(--gray-100);padding:12px;border-radius:8px;margin-top:8px;word-wrap:break-word;overflow-wrap:break-word}
+  .tx-preview-label{font-weight:600;color:var(--gray-800);display:block;margin-top:8px}
+  .tx-preview-label:first-child{margin-top:0}
+  .tx-preview-value{display:block;margin-top:4px;font-size:13px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -72,8 +76,7 @@
     <button id="buildBtn">Build</button>
     <button id="resetBtn">Reset Transaction</button>
   </div>
-  <div id="txIdView" class="small mono muted"></div>
-  <div id="preview" class="small mono muted" style="margin-top:6px"></div>
+  <div id="preview" class="mono"></div>
   <h3>Sign Transaction</h3>
   <button id="signBtn">Sign & Upload Witness</button>
   <div id="signedCounter" class="small muted" style="margin-top:8px"></div>
@@ -87,13 +90,8 @@
   <div class="collapse-content collapsed" id="logCollapse">
     <pre id="log"></pre>
   </div>
-  <h4 style="display:flex;align-items:center;gap:8px">
-    Collected Witnesses
-    <span class="collapsible collapsed" id="witnessToggle" style="font-size:14px;font-weight:normal">Show</span>
-  </h4>
-  <div class="collapse-content collapsed" id="witnessCollapse">
-    <pre id="wlist"></pre>
-  </div>
+  <h4>Collected Witnesses</h4>
+  <pre id="wlist"></pre>
   <hr/>
 </section>
 
@@ -130,9 +128,36 @@ async function connectWallet(){
 }
 
 function setTxId(txId){
-  currentTxId=txId; const el=document.getElementById('txIdView');
-  el.textContent = txId ? `Tx ID: ${txId}` : '';
+  currentTxId=txId;
   try{ if(txId){ localStorage.setItem('currentTxId', txId); } else { localStorage.removeItem('currentTxId'); } }catch(_){}
+}
+
+function formatPreview(txId, previewData){
+  if(!txId) return '';
+  let html = '<div class="tx-preview">';
+  html += '<span class="tx-preview-label">Transaction ID</span>';
+  html += `<span class="tx-preview-value">${txId}</span>`;
+  
+  if(previewData?.computedOutputs){
+    html += '<span class="tx-preview-label">Outputs</span>';
+    previewData.computedOutputs.forEach((out,i)=>{
+      html += `<span class="tx-preview-value"><strong>Output ${i+1}:</strong> ${out.address.substring(0,30)}... → ${(parseInt(out.lovelace)/1000000).toFixed(2)} ADA`;
+      if(out.assets && out.assets.length>0){
+        out.assets.forEach(a=>{
+          html += ` + ${a.quantity} tokens`;
+        });
+      }
+      html += '</span>';
+    });
+  }
+  
+  if(previewData?.fee){
+    html += '<span class="tx-preview-label">Fee</span>';
+    html += `<span class="tx-preview-value">${(parseInt(previewData.fee)/1000000).toFixed(2)} ADA</span>`;
+  }
+  
+  html += '</div>';
+  return html;
 }
 
 async function buildTx(){
@@ -154,7 +179,7 @@ async function buildTx(){
     setTxId(r.txId);
     // show preview
     const p=document.getElementById('preview');
-    if(r?.preview){ p.textContent = `Outputs: ${JSON.stringify(r.preview.computedOutputs)}\nFee: ${r.preview.fee}`; }
+    p.innerHTML = formatPreview(r.txId, r.preview);
     await refreshStatus();
   }catch(e){ log(e?.message||e); alert('Build failed'); }
 }
@@ -235,22 +260,6 @@ document.getElementById('statusToggle').onclick=function(){
   }
 };
 
-// Toggle witness list
-document.getElementById('witnessToggle').onclick=function(){
-  const toggle=document.getElementById('witnessToggle');
-  const content=document.getElementById('witnessCollapse');
-  const isCollapsed=content.classList.contains('collapsed');
-  if(isCollapsed){
-    content.classList.remove('collapsed');
-    toggle.classList.remove('collapsed');
-    toggle.textContent='Hide';
-  }else{
-    content.classList.add('collapsed');
-    toggle.classList.add('collapsed');
-    toggle.textContent='Show';
-  }
-};
-
 // Toggle log
 document.getElementById('logToggle').onclick=function(){
   const toggle=document.getElementById('logToggle');
@@ -292,17 +301,17 @@ document.getElementById('resetBtn').onclick=async()=>{
     await fetch('/api/reset',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ txId }) });
   }catch(_){ }
   setTxId(null);
-  document.getElementById('preview').textContent='';
+  document.getElementById('preview').innerHTML='';
   document.getElementById('status').textContent='';
   document.getElementById('wlist').textContent='';
   const sc=document.getElementById('signedCounter'); if(sc) sc.textContent='';
   const pBar=document.getElementById('progressBar'); if(pBar) pBar.style.display='none';
   document.getElementById('balanceInfo').textContent='';
-  // Collapse all sections
-  ['statusCollapse','witnessCollapse','logCollapse'].forEach(id=>{
+  // Collapse sections
+  ['statusCollapse','logCollapse'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.classList.add('collapsed');
   });
-  ['statusToggle','witnessToggle','logToggle'].forEach(id=>{
+  ['statusToggle','logToggle'].forEach(id=>{
     const el=document.getElementById(id); 
     if(el){ el.classList.add('collapsed'); el.textContent=id==='statusToggle'?'Show Details':'Show'; }
   });
@@ -316,7 +325,7 @@ evt.addEventListener('tx_created', (ev)=>{
     const data=JSON.parse(ev.data);
     setTxId(data.txId);
     const p=document.getElementById('preview');
-    if(data?.preview){ p.textContent = `Outputs: ${JSON.stringify(data.preview.computedOutputs)}\nFee: ${data.preview.fee}`; }
+    p.innerHTML = formatPreview(data.txId, data.preview);
     refreshStatus();
   }catch(e){ log(e?.message||e); }
 });

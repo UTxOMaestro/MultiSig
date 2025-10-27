@@ -4,17 +4,42 @@
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Summon Exit — Multisig Sign</title>
 <style>
-  body{font-family:system-ui,ui-sans-serif;max-width:720px;margin:24px auto;padding:0 16px}
-  button{padding:8px 12px} input{width:100%;padding:8px;margin:6px 0 12px}
-  pre{background:#f6f6f6;padding:8px;border-radius:6px;overflow:auto}
+  :root{
+    --primary:#4f46e5;
+    --primary-hover:#4338ca;
+    --success:#10b981;
+    --error:#ef4444;
+    --gray-50:#f9fafb;
+    --gray-100:#f3f4f6;
+    --gray-600:#4b5563;
+    --gray-800:#1f2937;
+  }
+  body{font-family:system-ui,ui-sans-serif;max-width:720px;margin:24px auto;padding:0 16px;background:var(--gray-50);line-height:1.6;font-size:16px}
+  section{background:white;padding:24px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px}
+  h1{color:var(--gray-800);font-weight:700}
+  h3{color:var(--gray-800);font-weight:600;margin-top:0}
+  button{padding:10px 16px;background:var(--primary);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:500;transition:all 0.2s ease;font-size:14px}
+  button:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-1px);box-shadow:0 4px 6px rgba(79,70,229,0.2)}
+  button:disabled{background:var(--gray-600);cursor:not-allowed;opacity:0.5}
+  input{width:100%;padding:10px;margin:6px 0 12px;border:2px solid var(--gray-100);border-radius:8px;font-size:14px;transition:border-color 0.2s}
+  input:focus{outline:none;border-color:var(--primary)}
+  pre{background:var(--gray-100);padding:12px;border-radius:8px;overflow:auto;max-height:200px}
   code{word-break:break-all}
   .row{display:flex;gap:8px;align-items:center}
   .row>input{flex:1}
-  .muted{color:#555}
-  .ok{color:green}
-  .err{color:#b00020}
+  .muted{color:var(--gray-600)}
+  .ok{color:var(--success)}
+  .err{color:var(--error)}
   .mono{font-family:ui-monospace,Consolas,Monaco,Menlo,monospace}
-  .small{font-size:12px}
+  .small{font-size:14px}
+  .badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:500}
+  .badge.success{background:#d1fae5;color:#065f46}
+  .badge.error{background:#fee2e2;color:#991b1b}
+  .badge.info{background:#dbeafe;color:#1e40af}
+  .badge.warning{background:#fef3c7;color:#92400e}
+  .progress-bar{background:var(--gray-100);height:8px;border-radius:4px;overflow:hidden;margin:8px 0}
+  .progress-fill{background:linear-gradient(90deg,var(--primary),var(--success));height:100%;transition:width 0.3s ease;border-radius:4px}
+  hr{border:none;border-top:1px solid var(--gray-100);margin:20px 0}
 </style>
 </head>
 <body>
@@ -23,7 +48,7 @@
 <section>
   <h3>Connect Wallet (CIP-30)</h3>
   <button id="connectBtn">Connect</button>
-  <div id="walletInfo" class="muted small">Not connected</div>
+  <div id="walletInfo" class="small" style="margin-top:8px"></div>
   <div class="small muted">Only Eternl is supported</div>
   <hr/>
 </section>
@@ -45,7 +70,10 @@
   <div id="preview" class="small mono muted" style="margin-top:6px"></div>
   <h3>Sign Transaction</h3>
   <button id="signBtn">Sign & Upload Witness</button>
-  <div id="signedCounter" class="small mono muted"></div>
+  <div id="signedCounter" class="small muted" style="margin-top:8px"></div>
+  <div id="progressBar" class="progress-bar" style="display:none">
+    <div id="progressFill" class="progress-fill" style="width:0%"></div>
+  </div>
   <pre id="log"></pre>
   <h4>Collected Witnesses</h4>
   <pre id="wlist"></pre>
@@ -67,8 +95,16 @@ function log(m){logEl.textContent+=(typeof m==='string'?m:JSON.stringify(m,null,
 async function connectWallet(){
   try{
     if(window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
-    document.getElementById('walletInfo').textContent = walletApi?`Connected: ${usedWallet}`:'No CIP-30 wallet found';
-  }catch(e){ document.getElementById('walletInfo').textContent='Failed to connect'; log(e?.message||e); }
+    const info=document.getElementById('walletInfo');
+    if(walletApi){
+      info.innerHTML=`<span class="badge success">✓ Connected: ${usedWallet}</span>`;
+    }else{
+      info.innerHTML=`<span class="badge error">No CIP-30 wallet found</span>`;
+    }
+  }catch(e){ 
+    document.getElementById('walletInfo').innerHTML='<span class="badge error">Failed to connect</span>'; 
+    log(e?.message||e); 
+  }
 }
 
 function setTxId(txId){
@@ -120,10 +156,25 @@ async function refreshStatus(){
   document.getElementById('status').textContent=JSON.stringify(s,null,2);
   const canSubmit = s && s.collected && s.m && s.collected.length >= s.m;
   document.getElementById('submitBtn').disabled = !canSubmit;
-  // update signed counter (x/y)
+  // update signed counter (x/y) and progress bar
   try{
     const sc=document.getElementById('signedCounter');
-    if(sc){ const x=(s?.collected?.length)||0; const y=(s?.m)||0; sc.textContent = y?`${x}/${y} signed`:''; }
+    const x=(s?.collected?.length)||0; const y=(s?.m)||0; 
+    if(sc && y){ 
+      sc.textContent = `${x}/${y} signatures collected`;
+      // Update progress bar
+      const pBar=document.getElementById('progressBar');
+      const pFill=document.getElementById('progressFill');
+      if(pBar && pFill){
+        pBar.style.display='block';
+        const percent=(x/y)*100;
+        pFill.style.width=`${percent}%`;
+      }
+    }else{
+      if(sc) sc.textContent='';
+      const pBar=document.getElementById('progressBar');
+      if(pBar) pBar.style.display='none';
+    }
   }catch(_){ }
   try{
     const ws=await fetch(`/api/witnesses/${currentTxId}`).then(r=>r.json());
@@ -175,6 +226,7 @@ document.getElementById('resetBtn').onclick=async()=>{
   document.getElementById('status').textContent='';
   document.getElementById('wlist').textContent='';
   const sc=document.getElementById('signedCounter'); if(sc) sc.textContent='';
+  const pBar=document.getElementById('progressBar'); if(pBar) pBar.style.display='none';
   document.getElementById('balanceInfo').textContent='';
   log('Transaction reset');
 };
@@ -193,6 +245,9 @@ evt.addEventListener('tx_created', (ev)=>{
 evt.addEventListener('witness', ()=>{ refreshStatus(); });
 evt.addEventListener('submitted', (ev)=>{ try{ log(JSON.parse(ev.data)); }catch{} });
 evt.addEventListener('reset', ()=>{ /* noop: client handles own UI reset via button */ });
+
+// Set initial wallet status
+document.getElementById('walletInfo').innerHTML='<span class="badge warning">Not connected</span>';
 
 // Restore last txId on load and refresh status
 try{

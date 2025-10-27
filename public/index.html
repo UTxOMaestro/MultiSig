@@ -22,6 +22,8 @@
   button{padding:10px 16px;background:var(--primary);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:500;transition:all 0.2s ease;font-size:14px}
   button:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-1px);box-shadow:0 4px 6px rgba(79,70,229,0.2)}
   button:disabled{background:var(--gray-600);cursor:not-allowed;opacity:0.5}
+  button.warning{background:var(--error)}
+  button.warning:hover:not(:disabled){background:#dc2626;box-shadow:0 4px 6px rgba(239,68,68,0.3)}
   input{width:100%;padding:10px;margin:6px 0 12px;border:2px solid var(--gray-100);border-radius:8px;font-size:14px;transition:border-color 0.2s}
   input:focus{outline:none;border-color:var(--primary)}
   pre{background:var(--gray-100);padding:12px;border-radius:8px;overflow:auto;max-height:200px}
@@ -130,6 +132,12 @@ async function connectWallet(){
 
 function setTxId(txId){
   currentTxId=txId;
+  const resetBtn=document.getElementById('resetBtn');
+  if(txId){
+    resetBtn.classList.add('warning');
+  }else{
+    resetBtn.classList.remove('warning');
+  }
   try{ if(txId){ localStorage.setItem('currentTxId', txId); } else { localStorage.removeItem('currentTxId'); } }catch(_){}
 }
 
@@ -297,6 +305,12 @@ document.getElementById('balBtn').onclick=async()=>{
 
 // Reset transaction (client + server)
 document.getElementById('resetBtn').onclick=async()=>{
+  // Warn user if there's an active transaction
+  if(currentTxId){
+    const confirmed=confirm('⚠️ Are you sure you want to reset?\n\nThere is an active multisig transaction in progress. Resetting will clear all collected signatures and cancel this transaction for all participants.');
+    if(!confirmed) return;
+  }
+  
   try{
     const txId=currentTxId;
     await fetch('/api/reset',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ txId }) });

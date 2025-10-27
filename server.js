@@ -24,7 +24,7 @@ const bf = bfClient(PROJECT_ID, NETWORK);
 // Hardcoded allowed signer key hashes (lowercase hex; DO NOT RELY ON env)
 const ALLOWED_PAYMENT_KEY_HASHES = [
   'f95cb3bc90e3fdb3db4a98ed64a77762daa891c7af7138d45e38adb7',
-  '22c601535ab5159654c1d0d56fae298e56b84af96325a4b2772ab014',
+  '355901496a2d2ab115cdaa28aa3f14e2d78aa328139f00b01d2bccf7',
   '20ce5b4341421c7c3f9aa03ea0413c10d2b975a8bd4fde6b43a0444a'
 ].map(h => h.toLowerCase());
 

@@ -63,9 +63,10 @@
   <div class="row" style="gap:8px">
     <button id="connectEternl">Connect Eternl</button>
     <button id="connectLace">Connect Lace</button>
+    <button id="connectVespr">Connect Vespr</button>
   </div>
   <div id="walletInfo" class="small" style="margin-top:8px"></div>
-  <div class="small muted">Supported: Eternl, Lace</div>
+  <div class="small muted">Supported: Eternl, Lace, Vespr</div>
   <hr/>
 </section>
 
@@ -123,6 +124,7 @@ async function connectWallet(name){
     walletApi=null; usedWallet=null;
     if(name==='eternl' && window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
     else if(name==='lace' && window.cardano?.lace){ usedWallet='lace'; walletApi=await window.cardano.lace.enable(); }
+    else if(name==='vespr' && window.cardano?.vespr){ usedWallet='vespr'; walletApi=await window.cardano.vespr.enable(); }
     const info=document.getElementById('walletInfo');
     if(walletApi){
       info.innerHTML=`<span class="badge success">✓ Connected: ${usedWallet}</span>`;
@@ -254,6 +256,7 @@ async function submitTx(){
 
 document.getElementById('connectEternl').onclick=()=>connectWallet('eternl');
 document.getElementById('connectLace').onclick=()=>connectWallet('lace');
+document.getElementById('connectVespr').onclick=()=>connectWallet('vespr');
 document.getElementById('buildBtn').onclick=buildTx;
 document.getElementById('signBtn').onclick=signAndUpload;
 document.getElementById('statusBtn').onclick=refreshStatus;
@@ -362,8 +365,10 @@ function updateWalletAvailability(){
   try{
     const ce=document.getElementById('connectEternl');
     const cl=document.getElementById('connectLace');
+    const cv=document.getElementById('connectVespr');
     if(ce) ce.disabled = !(window.cardano && window.cardano.eternl);
     if(cl) cl.disabled = !(window.cardano && window.cardano.lace);
+    if(cv) cv.disabled = !(window.cardano && window.cardano.vespr);
   }catch(_){ }
 }
 updateWalletAvailability();

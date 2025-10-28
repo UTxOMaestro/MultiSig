@@ -60,9 +60,12 @@
 
 <section>
   <h3>Connect Wallet (CIP-30)</h3>
-  <button id="connectBtn">Connect</button>
+  <div class="row" style="gap:8px">
+    <button id="connectEternl">Connect Eternl</button>
+    <button id="connectLace">Connect Lace</button>
+  </div>
   <div id="walletInfo" class="small" style="margin-top:8px"></div>
-  <div class="small muted">Only Eternl is supported</div>
+  <div class="small muted">Supported: Eternl, Lace</div>
   <hr/>
 </section>
 
@@ -115,14 +118,16 @@
 let walletApi=null, usedWallet=null, currentTxId=null; const logEl=document.getElementById('log');
 function log(m){logEl.textContent+=(typeof m==='string'?m:JSON.stringify(m,null,2))+"\n";}
 
-async function connectWallet(){
+async function connectWallet(name){
   try{
-    if(window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
+    walletApi=null; usedWallet=null;
+    if(name==='eternl' && window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
+    else if(name==='lace' && window.cardano?.lace){ usedWallet='lace'; walletApi=await window.cardano.lace.enable(); }
     const info=document.getElementById('walletInfo');
     if(walletApi){
       info.innerHTML=`<span class="badge success">✓ Connected: ${usedWallet}</span>`;
     }else{
-      info.innerHTML=`<span class="badge error">No CIP-30 wallet found</span>`;
+      info.innerHTML=`<span class="badge error">Wallet ${name} not found</span>`;
     }
   }catch(e){ 
     document.getElementById('walletInfo').innerHTML='<span class="badge error">Failed to connect</span>'; 
@@ -247,7 +252,8 @@ async function submitTx(){
   log(r); if(r?.submitted&&r?.txHash) alert(`Submitted! ${r.txHash}`);
 }
 
-document.getElementById('connectBtn').onclick=connectWallet;
+document.getElementById('connectEternl').onclick=()=>connectWallet('eternl');
+document.getElementById('connectLace').onclick=()=>connectWallet('lace');
 document.getElementById('buildBtn').onclick=buildTx;
 document.getElementById('signBtn').onclick=signAndUpload;
 document.getElementById('statusBtn').onclick=refreshStatus;
@@ -350,6 +356,18 @@ evt.addEventListener('reset', ()=>{ /* noop: client handles own UI reset via but
 
 // Set initial wallet status
 document.getElementById('walletInfo').innerHTML='<span class="badge warning">Not connected</span>';
+
+// Disable unavailable wallet options by default; update when wallets initialize
+function updateWalletAvailability(){
+  try{
+    const ce=document.getElementById('connectEternl');
+    const cl=document.getElementById('connectLace');
+    if(ce) ce.disabled = !(window.cardano && window.cardano.eternl);
+    if(cl) cl.disabled = !(window.cardano && window.cardano.lace);
+  }catch(_){ }
+}
+updateWalletAvailability();
+window.addEventListener('cardano#initialized', updateWalletAvailability);
 
 // Restore last txId on load and refresh status
 try{

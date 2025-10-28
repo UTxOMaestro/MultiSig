@@ -366,13 +366,26 @@ function updateWalletAvailability(){
     const ce=document.getElementById('connectEternl');
     const cl=document.getElementById('connectLace');
     const cv=document.getElementById('connectVespr');
-    if(ce) ce.disabled = !(window.cardano && window.cardano.eternl);
-    if(cl) cl.disabled = !(window.cardano && window.cardano.lace);
-    if(cv) cv.disabled = !(window.cardano && window.cardano.vespr);
+    const c=window.cardano;
+    // If wallets haven't injected yet, keep buttons enabled so user can still attempt connection
+    if(!c){ return; }
+    if(ce) ce.disabled = !c.eternl;
+    if(cl) cl.disabled = !c.lace;
+    if(cv) cv.disabled = !c.vespr;
   }catch(_){ }
 }
 updateWalletAvailability();
 window.addEventListener('cardano#initialized', updateWalletAvailability);
+
+// Fallback: some wallets may not fire the event; poll briefly for injection
+(function(){
+  let tries=0; const maxTries=20; // ~5s at 250ms
+  const t=setInterval(()=>{
+    tries++;
+    updateWalletAvailability();
+    if(window.cardano || tries>=maxTries){ clearInterval(t); }
+  },250);
+})();
 
 // Restore last txId on load and refresh status
 try{

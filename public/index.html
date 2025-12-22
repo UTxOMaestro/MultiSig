@@ -271,7 +271,11 @@ async function buildTx(){
         outputs:[{ address, lovelace:'0', assets:[{ unit, quantity: qty }] }]
       })
     }).then(r=>r.json());
-    if(!r?.txId){ log(r); return alert('Failed to build tx'); }
+    if(!r?.txId){
+      log(r);
+      const detail = r?.detail || r?.error || (typeof r === 'string' ? r : JSON.stringify(r));
+      return alert(`Failed to build tx: ${detail}`);
+    }
     setTxId(r.txId);
     // show preview
     const p=document.getElementById('preview');

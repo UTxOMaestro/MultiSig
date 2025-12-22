@@ -248,8 +248,13 @@ async function buildUnsignedTx({
     tb.add_output(CSL.TransactionOutput.new(changeAddr, changeVal));
   }
 
-  // set fixed fee (no add_change_if_needed!)
-  tb.set_fee(CSL.BigNum.from_str(fee));
+  // set fee:
+  // - we prefer a fixed floor fee (defaults to 1 ADA)
+  // - but we must satisfy the protocol min fee or the builder will fail
+  const fixedFee = CSL.BigNum.from_str(fee);
+  const minFee = tb.min_fee();
+  const finalFee = fixedFee.compare(minFee) >= 0 ? fixedFee : minFee;
+  tb.set_fee(finalFee);
 
   // Add required signers explicitly so wallets know which keys must witness this tx.
   // (Native script will also enforce this on-chain.)
@@ -277,7 +282,14 @@ async function buildUnsignedTx({
   const unsignedTx = CSL.Transaction.new(body, ws);
 
   // preview
-  const preview = { mode, selectedInputs: utxos, computedOutputs: [], fee, changeCoin, changeHasTokens: !jsAssetsIsEmpty(changeAssets) };
+  const preview = {
+    mode,
+    selectedInputs: utxos,
+    computedOutputs: [],
+    fee: finalFee.to_str(),
+    changeCoin,
+    changeHasTokens: !jsAssetsIsEmpty(changeAssets)
+  };
   const outs = body.outputs();
   for (let i = 0; i < outs.len(); i++) {
     const o = outs.get(i);

@@ -16,17 +16,34 @@ app.use('/', express.static('./public'));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 
-const NETWORK = process.env.NETWORK || 'mainnet';
 const PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 if (!PROJECT_ID) { console.error('Missing BLOCKFROST_PROJECT_ID'); process.exit(1); }
+// Hardcoded network for this deployment (as requested)
+const NETWORK = 'mainnet';
 const bf = bfClient(PROJECT_ID, NETWORK);
 
-// Hardcoded allowed signer key hashes (lowercase hex; DO NOT RELY ON env)
-const ALLOWED_PAYMENT_KEY_HASHES = [
-  'f95cb3bc90e3fdb3db4a98ed64a77762daa891c7af7138d45e38adb7',
-  '355901496a2d2ab115cdaa28aa3f14e2d78aa328139f00b01d2bccf7',
-  '20ce5b4341421c7c3f9aa03ea0413c10d2b975a8bd4fde6b43a0444a'
-].map(h => h.toLowerCase());
+/* ----------------------- Hardcoded multisig configuration ----------------------- */
+// The payment native script (CBOR hex) you provided (2-of-2)
+const PAYMENT_SCRIPT_CBOR_HEX =
+  '820181830302828200581c2628bd7a9a004b20c91f2b7b241183813c62e049917810e364e275318200581c9cc6f61972a60b643acbc266db2514e450ac96e3592e2588a2d6b4a8';
+// Optional stake native script for deriving the base script address (not required for spending)
+const STAKE_SCRIPT_CBOR_HEX = PAYMENT_SCRIPT_CBOR_HEX;
+
+// The two wallets that must participate (stable identity = stake key hash)
+const ALLOWED_SIGNERS = [
+  {
+    label: 'Signer 1',
+    address:
+      'addr1qynz30t6ngqykgxfru4hkfq3swqncchqfxghsy8rvn382v0spvdrn65j9j978wn52pm5erayt3v90ymmte0pcc8ym95qlv6jgh',
+    stakeKeyHash: 'f00b1a39ea922c8be3ba7450774c8fa45c5857937b5e5e1c60e4d968'
+  },
+  {
+    label: 'Signer 2',
+    address:
+      'addr1q9tkavplzau59l2rftr8njgfq7f0gqcnuxw4m2um4w7jaejs3r3w8ty82wrkle7asxnryw2p5cfvn655azp5qr4076js6uph22',
+    stakeKeyHash: '5088e2e3ac8753876fe7dd81a6323941a612c9ea94e883400eaff6a5'
+  }
+].map((s) => ({ ...s, stakeKeyHash: s.stakeKeyHash.toLowerCase() }));
 
 function derivePaymentKeyHashHexFromAddr(addrBech32) {
   try {
@@ -45,17 +62,172 @@ function derivePaymentKeyHashHexFromAddr(addrBech32) {
   return null;
 }
 
-// Note: signer key hashes are specified directly above
+function hexToBytes(h) {
+  return Buffer.from(h, 'hex');
+}
+function bytesToHex(b) {
+  return Buffer.from(b).toString('hex');
+}
 
-const FORCED_M_REQUIRED = 3;
+const K = {
+  SCRIPT_PUBKEY: 0,
+  SCRIPT_ALL: 1,
+  SCRIPT_ANY: 2,
+  SCRIPT_N_OF_K: 3,
+  SCRIPT_INVALID_BEFORE: 4,
+  SCRIPT_INVALID_HEREAFTER: 5
+};
 
-// Defaults from env (override per request if needed)
-const DEF_MSIG_ADDR = process.env.MULTISIG_ADDRESS || '';
-const DEF_PAY_SCRIPT = process.env.PAYMENT_SCRIPT_CBOR || '';
-const DEF_M = parseInt(process.env.M_REQUIRED || '3', 10);
-const DEF_DEST = process.env.DEST_ADDRESS || '';
-const ENV_KEYHASHES = (process.env.REQUIRED_KEY_HASHES || '')
-  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+function getChildScripts(container) {
+  if (typeof container.scripts === 'function') return container.scripts();
+  if (typeof container.native_scripts === 'function') return container.native_scripts();
+  return null;
+}
+
+function collectScriptInfo(nativeScript, acc, path = []) {
+  const kind = nativeScript.kind();
+  switch (kind) {
+    case K.SCRIPT_PUBKEY: {
+      const kh = nativeScript.as_script_pubkey().addr_keyhash();
+      const hex = bytesToHex(kh.to_bytes());
+      acc.keys.add(hex.toLowerCase());
+      acc.tree.push({ type: 'pubkey', keyHash: hex.toLowerCase(), path: [...path] });
+      break;
+    }
+    case K.SCRIPT_ALL: {
+      const scripts = getChildScripts(nativeScript.as_script_all());
+      acc.tree.push({ type: 'all', path: [...path] });
+      if (scripts) {
+        for (let i = 0; i < scripts.len(); i++) {
+          collectScriptInfo(scripts.get(i), acc, [...path, `all[${i}]`]);
+        }
+      }
+      break;
+    }
+    case K.SCRIPT_ANY: {
+      const scripts = getChildScripts(nativeScript.as_script_any());
+      acc.tree.push({ type: 'any', path: [...path] });
+      if (scripts) {
+        for (let i = 0; i < scripts.len(); i++) {
+          collectScriptInfo(scripts.get(i), acc, [...path, `any[${i}]`]);
+        }
+      }
+      break;
+    }
+    case K.SCRIPT_N_OF_K: {
+      const sok = nativeScript.as_script_n_of_k();
+      const n = sok.n();
+      acc.thresholds.push(n);
+      const scripts = getChildScripts(sok);
+      acc.tree.push({ type: 'atLeast', n, k: scripts ? scripts.len() : 0, path: [...path] });
+      if (scripts) {
+        for (let i = 0; i < scripts.len(); i++) {
+          collectScriptInfo(scripts.get(i), acc, [...path, `atLeast(n=${n})[${i}]`]);
+        }
+      }
+      break;
+    }
+    case K.SCRIPT_INVALID_BEFORE: {
+      const slot = nativeScript.as_timelock_start().slot();
+      acc.invalidBefore = Math.max(acc.invalidBefore ?? 0, Number(slot.to_str()));
+      acc.tree.push({ type: 'invalid_before', slot: Number(slot.to_str()), path: [...path] });
+      break;
+    }
+    case K.SCRIPT_INVALID_HEREAFTER: {
+      const slot = nativeScript.as_timelock_expiry().slot();
+      acc.invalidHereafter = Math.min(
+        acc.invalidHereafter ?? Number.MAX_SAFE_INTEGER,
+        Number(slot.to_str())
+      );
+      acc.tree.push({ type: 'invalid_hereafter', slot: Number(slot.to_str()), path: [...path] });
+      break;
+    }
+    default:
+      acc.tree.push({ type: 'unknown', kind, path: [...path] });
+  }
+}
+
+function deriveSummary(scriptHex) {
+  const ns = CSL.NativeScript.from_bytes(hexToBytes(scriptHex));
+  const info = {
+    keys: new Set(),
+    thresholds: [],
+    invalidBefore: null,
+    invalidHereafter: null,
+    tree: []
+  };
+  collectScriptInfo(ns, info);
+
+  const requiredKeyHashes = Array.from(info.keys);
+  // If there is any explicit N-of-K, take the maximum N encountered as the effective threshold.
+  let mRequired;
+  if (info.thresholds.length > 0) {
+    mRequired = Math.max(...info.thresholds);
+  } else {
+    const hasAny = info.tree.some((n) => n.type === 'any');
+    mRequired = hasAny ? 1 : requiredKeyHashes.length;
+  }
+
+  const scriptHashHex = bytesToHex(ns.hash(CSL.ScriptHashNamespace.NativeScript).to_bytes());
+  const hasTimeConstraints = info.invalidBefore !== null || info.invalidHereafter !== null;
+
+  return {
+    mRequired,
+    totalKeys: requiredKeyHashes.length,
+    requiredKeyHashes,
+    hasTimeConstraints,
+    invalidBefore: info.invalidBefore,
+    invalidHereafter: info.invalidHereafter === Number.MAX_SAFE_INTEGER ? null : info.invalidHereafter,
+    scriptHash: scriptHashHex,
+    structure: info.tree
+  };
+}
+
+function bech32AddressesFrom(paymentScriptHex, stakeScriptHex, network) {
+  const netId = network === 'mainnet' ? 1 : 0;
+  const payNS = CSL.NativeScript.from_bytes(hexToBytes(paymentScriptHex));
+  const payCred = CSL.StakeCredential.from_scripthash(
+    payNS.hash(CSL.ScriptHashNamespace.NativeScript)
+  );
+  if (stakeScriptHex) {
+    const stakeNS = CSL.NativeScript.from_bytes(hexToBytes(stakeScriptHex));
+    const stakeCred = CSL.StakeCredential.from_scripthash(
+      stakeNS.hash(CSL.ScriptHashNamespace.NativeScript)
+    );
+    const base = CSL.BaseAddress.new(netId, payCred, stakeCred).to_address().to_bech32();
+    return {
+      baseAddress: base,
+      enterpriseAddress: CSL.EnterpriseAddress.new(netId, payCred).to_address().to_bech32()
+    };
+  }
+  return {
+    baseAddress: null,
+    enterpriseAddress: CSL.EnterpriseAddress.new(netId, payCred).to_address().to_bech32()
+  };
+}
+
+// Derived, canonical script requirements
+const PAYMENT_SUMMARY = deriveSummary(PAYMENT_SCRIPT_CBOR_HEX);
+const REQUIRED_KEY_HASHES = PAYMENT_SUMMARY.requiredKeyHashes.map((h) => h.toLowerCase());
+const M_REQUIRED = PAYMENT_SUMMARY.mRequired;
+if (M_REQUIRED !== 2 || REQUIRED_KEY_HASHES.length !== 2) {
+  console.error(
+    `Expected a 2-of-2 script. Got m=${M_REQUIRED} with keys=${REQUIRED_KEY_HASHES.length}. Refusing to start.`
+  );
+  process.exit(1);
+}
+
+const DERIVED_ADDRS = bech32AddressesFrom(PAYMENT_SCRIPT_CBOR_HEX, STAKE_SCRIPT_CBOR_HEX, NETWORK);
+const MULTISIG_ADDRESS = DERIVED_ADDRS.baseAddress || DERIVED_ADDRS.enterpriseAddress;
+const MULTISIG_ENTERPRISE_ADDRESS = DERIVED_ADDRS.enterpriseAddress;
+
+// Best-effort: map provided signer addresses -> payment key hashes (for debugging / UI only)
+const SIGNER_PAYMENT_KEY_HASHES_FROM_ADDRS = ALLOWED_SIGNERS.map((s) => ({
+  label: s.label,
+  address: s.address,
+  stakeKeyHash: s.stakeKeyHash,
+  paymentKeyHash: derivePaymentKeyHashHexFromAddr(s.address)
+}));
 
 // Simple in-memory event stream for broadcasting tx lifecycle
 const sseClients = new Set();
@@ -87,39 +259,50 @@ app.get('/api/balance/:unit', async (req, res) => {
   try {
     const unit = String(req.params.unit || '').toLowerCase();
     if (!unit || unit.length < 56) return res.status(400).json({ error: 'invalid_unit' });
-    if (!DEF_MSIG_ADDR) return res.status(400).json({ error: 'multisig_not_configured' });
 
-    const utxos = await bf.utxosByAddress(DEF_MSIG_ADDR);
+    const utxos = await bf.utxosByAddress(MULTISIG_ADDRESS);
     let sum = 0n;
     for (const u of utxos) {
       for (const a of u.amount) {
         if (a.unit === unit) sum += BigInt(a.quantity);
       }
     }
-    return res.json({ address: DEF_MSIG_ADDR, unit, quantity: sum.toString() });
+    return res.json({ address: MULTISIG_ADDRESS, unit, quantity: sum.toString() });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
   }
 });
 
+// Expose the fixed multisig configuration to the frontend (no secrets here)
+app.get('/api/config', (_req, res) => {
+  return res.json({
+    network: NETWORK,
+    multisig: {
+      address: MULTISIG_ADDRESS,
+      enterpriseAddress: MULTISIG_ENTERPRISE_ADDRESS,
+      scriptHash: PAYMENT_SUMMARY.scriptHash,
+      mRequired: M_REQUIRED,
+      requiredKeyHashes: REQUIRED_KEY_HASHES
+    },
+    allowedSigners: ALLOWED_SIGNERS,
+    signerPaymentKeyHashesFromProvidedAddresses: SIGNER_PAYMENT_KEY_HASHES_FROM_ADDRS
+  });
+});
+
 // Create session + unsigned tx
 app.post('/api/create', async (req, res) => {
   try {
     const {
-      multisigAddress = DEF_MSIG_ADDR,
-      paymentScriptHex = DEF_PAY_SCRIPT,
       mode = 'sendAll',       // default sweep
-      destAddress = DEF_DEST, // from ENV
+      destAddress = null,     // client can supply for sendAll
       outputs                 // for explicit mode
     } = req.body || {};
 
-    if (!multisigAddress || !paymentScriptHex)
-      return res.status(400).json({ error: 'missing_params' });
-
-    // Force 3-of-3 from the hardcoded allowlist
-    const normalizedRequired = ALLOWED_PAYMENT_KEY_HASHES;
-    const mReq = FORCED_M_REQUIRED;
+    const multisigAddress = MULTISIG_ADDRESS;
+    const paymentScriptHex = PAYMENT_SCRIPT_CBOR_HEX;
+    const normalizedRequired = REQUIRED_KEY_HASHES;
+    const mReq = M_REQUIRED;
 
     const build = await buildUnsignedTx({
       bf, network: NETWORK,
@@ -144,7 +327,8 @@ app.post('/api/create', async (req, res) => {
       txId: build.txId,
       preview: build.preview,
       mRequired: mReq,
-      requiredKeyHashes: normalizedRequired
+      requiredKeyHashes: normalizedRequired,
+      multisigAddress
     });
   } catch (e) {
     console.error(e);
@@ -183,11 +367,11 @@ app.post('/api/witness', async (req, res) => {
     const rec = getTxRecord(txId);
     if (!rec) return res.status(404).json({ error: 'not_found' });
 
-    // If signer hash not provided, derive from witness.
     // Accept either a TransactionWitnessSet CBOR or a full signed Transaction CBOR.
-    let signer = signerKeyHashHex;
+    // Extract *all* vkey witnesses and store only those that match the required key hashes.
+    const requiredSet = new Set(rec.signersKeyHashes.map((h) => String(h).toLowerCase()));
+    let vkeys = null;
     try {
-      let vkeys = null;
       try {
         const ws = CSL.TransactionWitnessSet.from_bytes(Buffer.from(witnessHex, 'hex'));
         vkeys = ws.vkeys();
@@ -196,22 +380,53 @@ app.post('/api/witness', async (req, res) => {
         const ws2 = tx.witness_set();
         vkeys = ws2?.vkeys();
       }
-      if (!signer) {
-        if (!vkeys || vkeys.len() === 0) return res.status(400).json({ error: 'empty_vkeys' });
-        const vk = vkeys.get(0).vkey().public_key();
-        signer = Buffer.from(vk.hash().to_bytes()).toString('hex');
-      }
     } catch (e) {
       return res.status(400).json({ error: 'invalid_witness_cbor' });
     }
 
-    // Allowlist check removed - accept any signer
-    const normalizedSigner = String(signer).toLowerCase();
+    if (!vkeys || vkeys.len() === 0) return res.status(400).json({ error: 'empty_vkeys' });
 
-    const r = addWitness(txId, normalizedSigner, witnessHex);
-    if (!r.ok) return res.status(500).json({ error: r.error });
-    try { sseBroadcast('witness', { txId, collected: r.count, required: r.m }); } catch {}
-    return res.json({ ok: true, submitted: false, collected: r.count, required: r.m });
+    const accepted = [];
+    const ignored = [];
+    for (let i = 0; i < vkeys.len(); i++) {
+      const vw = vkeys.get(i);
+      const vk = vw.vkey().public_key();
+      const khHex = Buffer.from(vk.hash().to_bytes()).toString('hex').toLowerCase();
+      if (!requiredSet.has(khHex)) {
+        ignored.push(khHex);
+        continue;
+      }
+      // Store this witness as a minimal witness set (only this vkeywitness)
+      const wsSingle = CSL.TransactionWitnessSet.new();
+      const vws = CSL.Vkeywitnesses.new();
+      vws.add(vw);
+      wsSingle.set_vkeys(vws);
+      const singleHex = Buffer.from(wsSingle.to_bytes()).toString('hex');
+      const r = addWitness(txId, khHex, singleHex);
+      if (!r.ok) return res.status(500).json({ error: r.error });
+      accepted.push(khHex);
+    }
+
+    if (accepted.length === 0) {
+      return res.status(403).json({
+        error: 'signer_not_allowed',
+        foundKeyHashes: ignored,
+        required: Array.from(requiredSet)
+      });
+    }
+
+    const r2 = status(txId);
+    try {
+      sseBroadcast('witness', { txId, collected: r2.collected.length, required: r2.m, accepted });
+    } catch {}
+    return res.json({
+      ok: true,
+      submitted: false,
+      accepted,
+      ignored,
+      collected: r2.collected.length,
+      required: r2.m
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });

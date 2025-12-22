@@ -33,9 +33,9 @@ npm start
 
 Fill `.env` using `.env.example`. Important:
 
-- `BLOCKFROST_PROJECT_ID` — your Blockfrost key for the selected `NETWORK`.
-- `MULTISIG_ADDRESS`, `PAYMENT_SCRIPT_CBOR`, `M_REQUIRED`, `REQUIRED_KEY_HASHES`.
-- `DEST_ADDRESS` — sweep destination for sendAll mode.
+- `BLOCKFROST_PROJECT_ID` — your Blockfrost key (server-side only).
+
+The multisig native script + allowed signers are hardcoded in `server.js` (as requested).
 
 ## API
 

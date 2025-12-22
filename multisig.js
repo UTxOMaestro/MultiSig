@@ -251,7 +251,19 @@ async function buildUnsignedTx({
   // set fixed fee (no add_change_if_needed!)
   tb.set_fee(CSL.BigNum.from_str(fee));
 
-  // DO NOT add required_signers; native script enforces 3-of-5 itself
+  // Add required signers explicitly so wallets know which keys must witness this tx.
+  // (Native script will also enforce this on-chain.)
+  if (Array.isArray(requiredKeyHashes) && requiredKeyHashes.length) {
+    for (const khHex of requiredKeyHashes) {
+      try {
+        tb.add_required_signer(
+          CSL.Ed25519KeyHash.from_bytes(Buffer.from(String(khHex).toLowerCase(), 'hex'))
+        );
+      } catch (_) {
+        // ignore malformed hashes
+      }
+    }
+  }
 
   const body = tb.build();
   const hash = CSL.hash_transaction(body);

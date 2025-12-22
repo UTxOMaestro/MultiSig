@@ -185,10 +185,17 @@ function bech32AddressesFrom(paymentScriptHex, stakeScriptHex, network) {
 
 (async function main(){
   try {
-    // Hardcoded inputs for Sharl Treasury
-    const payment = '820181830303858200581cd30790a7da1ab23a1eba940bb31afe04bbaf61bf4f59b6319c10609d8200581c34731b1995e5520642727736c859d2a590363ea41da368bebd49ace68200581c5cb3819463fea4cdf2c90540351b9387c09fc1951630b15d3f06fad48200581cc8c8ebf1e4964084ff85305d37746bdde4563a07c2b3b259d32e77ed8200581c4e54a64c2ab276ac88c465a9aba99c01ce16a6bd63098f5c9fddb998';
-    const stake = null; // No stake script provided for Sharl Treasury
-    const network = 'mainnet';
+    // Prefer CLI args when provided; otherwise fall back to the hardcoded example.
+    const hasCliPayment = process.argv.includes('--payment');
+    const { payment, stake, network } = hasCliPayment
+      ? parseArgs()
+      : {
+          // Hardcoded inputs for Sharl Treasury (example)
+          payment:
+            '820181830303858200581cd30790a7da1ab23a1eba940bb31afe04bbaf61bf4f59b6319c10609d8200581c34731b1995e5520642727736c859d2a590363ea41da368bebd49ace68200581c5cb3819463fea4cdf2c90540351b9387c09fc1951630b15d3f06fad48200581cc8c8ebf1e4964084ff85305d37746bdde4563a07c2b3b259d32e77ed8200581c4e54a64c2ab276ac88c465a9aba99c01ce16a6bd63098f5c9fddb998',
+          stake: null, // No stake script provided for Sharl Treasury
+          network: 'mainnet'
+        };
 
     const paymentSummary = deriveSummary(payment);
     const out = {

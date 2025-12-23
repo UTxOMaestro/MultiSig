@@ -122,6 +122,7 @@ let walletApi=null, usedWallet=null, currentTxId=null; const logEl=document.getE
 let appConfig=null;
 let walletStakeKeyHash=null; // 28-byte hex
 let walletAllowedSigner=null; // {label,address,stakeKeyHash}
+let walletPaymentKeyHash=null; // 28-byte hex (payment key hash)
 function log(m){logEl.textContent+=(typeof m==='string'?m:JSON.stringify(m,null,2))+"\n";}
 
 function setSignButtonState(){
@@ -132,15 +133,50 @@ function setSignButtonState(){
     btn.title='Connect an allowed wallet to sign';
     return;
   }
-  if(appConfig?.allowedSigners?.length){
-    if(!walletAllowedSigner){
-      btn.disabled=true;
-      btn.title='This wallet is not one of the allowed signers';
-      return;
-    }
+  // Gate by what actually matters on-chain: the tx/script required signer key hashes.
+  const required = appConfig?.multisig?.requiredKeyHashes || [];
+  const canSign = walletPaymentKeyHash && required.map(x=>String(x).toLowerCase()).includes(String(walletPaymentKeyHash).toLowerCase());
+  if(!canSign){
+    btn.disabled=true;
+    btn.title='This wallet does not control a required signing key for this multisig';
+    return;
   }
   btn.disabled=false;
   btn.title='';
+}
+
+function hexToBytes(hex){
+  try{
+    const h=String(hex||'').toLowerCase().replace(/^0x/,'');
+    if(!h || h.length%2) return null;
+    const out=new Uint8Array(h.length/2);
+    for(let i=0;i<out.length;i++){
+      out[i]=parseInt(h.slice(i*2,i*2+2),16);
+    }
+    return out;
+  }catch(_){ return null; }
+}
+function bytesToHex(bytes){
+  if(!bytes) return null;
+  let s='';
+  for(const b of bytes){ s+=b.toString(16).padStart(2,'0'); }
+  return s;
+}
+
+// Parse a CIP-30 address (hex bytes) and extract the payment key hash (for key-based addresses).
+function paymentKeyHashFromCip30AddressHex(addrHex){
+  try{
+    const bytes=hexToBytes(addrHex);
+    if(!bytes || bytes.length < 1+28) return null;
+    const header=bytes[0];
+    const addrType=header>>4;
+    // Types with *payment keyhash* credential:
+    // 0 base (keyhash,keyhash), 2 base (keyhash,scripthash), 4 pointer (keyhash), 6 enterprise (keyhash)
+    if([0,2,4,6].includes(addrType)){
+      return bytesToHex(bytes.slice(1, 1+28));
+    }
+    return null;
+  }catch(_){ return null; }
 }
 
 function stakeKeyHashFromRewardAddressHex(rewardAddrHex){
@@ -161,7 +197,9 @@ async function loadConfig(){
       cEl.innerHTML =
         `<div><strong>Multisig</strong>: <span class="mono">${m.address}</span></div>` +
         `<div><strong>Script hash</strong>: <span class="mono">${m.scriptHash}</span></div>` +
-        `<div><strong>Required</strong>: <span class="mono">${m.mRequired}-of-${(m.requiredKeyHashes||[]).length}</span></div>`;
+        `<div><strong>Required</strong>: <span class="mono">${m.mRequired}-of-${(m.requiredKeyHashes||[]).length}</span></div>` +
+        `<div style="margin-top:6px"><strong>Required key hashes</strong>:</div>` +
+        `<div class="mono" style="white-space:pre-wrap">${(m.requiredKeyHashes||[]).join('\\n')}</div>`;
     }
     setSignButtonState();
   }catch(e){
@@ -176,6 +214,7 @@ async function connectWallet(name){
     walletApi=null; usedWallet=null;
     walletStakeKeyHash=null;
     walletAllowedSigner=null;
+    walletPaymentKeyHash=null;
     if(name==='eternl' && window.cardano?.eternl){ usedWallet='eternl'; walletApi=await window.cardano.eternl.enable(); }
     else if(name==='lace' && window.cardano?.lace){ usedWallet='lace'; walletApi=await window.cardano.lace.enable(); }
     else if(name==='vespr' && window.cardano?.vespr){ usedWallet='vespr'; walletApi=await window.cardano.vespr.enable(); }
@@ -184,20 +223,32 @@ async function connectWallet(name){
     if(walletApi){
       info.innerHTML=`<span class="badge success">✓ Connected: ${usedWallet}</span>`;
       try{
+        // Derive payment key hash from any used/change address (CIP-30 gives hex bytes).
+        try{
+          const used=await walletApi.getUsedAddresses();
+          const a0=(used && used[0]) ? used[0] : (await walletApi.getChangeAddress?.());
+          walletPaymentKeyHash = paymentKeyHashFromCip30AddressHex(a0);
+        }catch(_){}
+
         const rewards=await walletApi.getRewardAddresses();
         const r0=(rewards && rewards[0]) ? rewards[0] : null;
         walletStakeKeyHash = stakeKeyHashFromRewardAddressHex(r0);
         if(appConfig?.allowedSigners?.length && walletStakeKeyHash){
           walletAllowedSigner = appConfig.allowedSigners.find(s => String(s.stakeKeyHash).toLowerCase() === walletStakeKeyHash);
         }
+        const required = (appConfig?.multisig?.requiredKeyHashes||[]).map(x=>String(x).toLowerCase());
+        const canSign = walletPaymentKeyHash && required.includes(String(walletPaymentKeyHash).toLowerCase());
         if(signerInfo){
-          if(walletAllowedSigner){
+          if(canSign){
             signerInfo.innerHTML =
-              `<span class="badge success">✓ Allowed signer: ${walletAllowedSigner.label}</span>` +
-              `<div class="small muted mono" style="margin-top:6px">stakeKeyHash: ${walletStakeKeyHash}</div>`;
+              `<span class="badge success">✓ Wallet can sign this multisig</span>` +
+              (walletAllowedSigner ? `<div class="small muted" style="margin-top:6px">Signer label: <strong>${walletAllowedSigner.label}</strong></div>` : '') +
+              (walletPaymentKeyHash ? `<div class="small muted mono" style="margin-top:6px">paymentKeyHash: ${walletPaymentKeyHash}</div>` : '') +
+              (walletStakeKeyHash ? `<div class="small muted mono" style="margin-top:6px">stakeKeyHash: ${walletStakeKeyHash}</div>` : '');
           }else{
             signerInfo.innerHTML =
-              `<span class="badge error">Not an allowed signer</span>` +
+              `<span class="badge error">Wallet cannot sign (no required key)</span>` +
+              (walletPaymentKeyHash ? `<div class="small muted mono" style="margin-top:6px">paymentKeyHash: ${walletPaymentKeyHash}</div>` : '') +
               (walletStakeKeyHash ? `<div class="small muted mono" style="margin-top:6px">stakeKeyHash: ${walletStakeKeyHash}</div>` : '');
           }
         }
@@ -286,8 +337,10 @@ async function buildTx(){
 
 async function signAndUpload(){
   if(!walletApi) return alert('Connect wallet first.');
-  if(appConfig?.allowedSigners?.length && !walletAllowedSigner){
-    return alert('This wallet is not one of the allowed signers for this multisig.');
+  const required = (appConfig?.multisig?.requiredKeyHashes||[]).map(x=>String(x).toLowerCase());
+  const canSign = walletPaymentKeyHash && required.includes(String(walletPaymentKeyHash).toLowerCase());
+  if(!canSign){
+    return alert('This wallet cannot sign this multisig (it does not control a required signing key).');
   }
   if(!currentTxId) return alert('Build a transaction first.');
   const tb=await fetch(`/api/txbody/${currentTxId}`).then(r=>r.json()); if(!(tb.txHex||tb.txBodyHex)){ log(tb); return; }

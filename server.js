@@ -40,8 +40,8 @@ const ALLOWED_SIGNERS = [
   {
     label: 'Signer 2',
     address:
-      'addr1q9tkavplzau59l2rftr8njgfq7f0gqcnuxw4m2um4w7jaejs3r3w8ty82wrkle7asxnryw2p5cfvn655azp5qr4076js6uph22',
-    stakeKeyHash: '5088e2e3ac8753876fe7dd81a6323941a612c9ea94e883400eaff6a5'
+      'addr1qxwvdasew2nqkep6e0pxdke9znj9ptykudvjufvg5tttf2zr84s2m7kffnhm6r8chausn9tuzssnj4wxjxup0pxqe7ksccr5p0',
+    stakeKeyHash: '433d60adfac94cefbd0cf8bf7909957c14213955c691b81784c0cfad'
   }
 ].map((s) => ({ ...s, stakeKeyHash: s.stakeKeyHash.toLowerCase() }));
 
